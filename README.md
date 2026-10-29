@@ -122,7 +122,7 @@ Palabras clave seguidas de su valor, en una o varias líneas. La lectura se deti
 
 ## Supuestos y limitaciones
 
-- El enunciado no incluye el dibujo del tablero. Se asumió un trono de 3 casillas conectado a la fila superior, con movimientos ortogonales; los saltos del puma se hacen solo en línea recta entre casillas de la cuadrícula.
+- El enunciado incluye el dibujo del tablero. Se asumió un trono de 3 casillas conectado a la fila superior, con movimientos ortogonales; los saltos del puma se hacen solo en línea recta entre casillas de la cuadrícula.
 - Los perros y el puma eligen sus movimientos al azar (el puma prefiere capturar si puede). No hay límite de jugadas, por lo que una partida podría alargarse.
 - Del archivo `test_cases.txt` solo se lee la configuración inicial; los eventos (`EVENT ...`) no se ejecutan.
 
