@@ -213,17 +213,146 @@ void mover(Mesa& m, bool es_puma, int id, int dest) {
     if (m.capturas >= 6) finalizar(m, "gana el PUMA con 6 capturas");
     else if (acorralado(m)) finalizar(m, "ganan los PERROS, el puma quedo acorralado");
 }
-//
-int main(int argc, char** argv) {
-    if (argc == 2 && !leer_config(argv[1])) return 1;
-    Mesa m{};
-    m.id = 1;
+
+sem_t sem_mesas;
+
+void turno(Mesa& m, Ficha* f) {
+    int desde = f->es_puma ? m.pos_puma : m.pos_perro[f->id];
+    vector<int> op;
+    if (f->es_puma)
+        for (auto s : saltos(desde))
+            if (m.tab[s.first] >= 0 && m.tab[s.second] == VACIO) op.push_back(s.second);
+    if (op.empty())
+        for (int v : vecinos(desde))
+            if (m.tab[v] == VACIO) op.push_back(v);
+    if (!op.empty()) mover(m, f->es_puma, f->id, op[rand_r(&f->seed) % op.size()]);
+}
+
+void* hilo_ficha(void* arg) {
+    Ficha* f = static_cast<Ficha*>(arg);
+    Mesa& m = *f->mesa;
+    bool seguir = true;
+    while (seguir) {
+        dormir(f->seed);
+        pthread_mutex_lock(&m.mtx);
+        if (g_sigint) finalizar(m, "partida interrumpida por SIGINT");
+        if (cfg.falla > 0 && rand_r(&f->seed) % 1000 < cfg.falla)
+            finalizar(m, string("gana ") + (f->es_puma ? "los PERROS" : "el PUMA") + " por abandono del oponente");
+        seguir = !m.terminada && (f->es_puma || m.pos_perro[f->id] >= 0);
+        if (seguir) turno(m, f);
+        pthread_mutex_unlock(&m.mtx);
+    }
+    return nullptr;
+}
+
+void* juez(void* arg) {
+    Mesa& m = *static_cast<Mesa*>(arg);
     iniciar(m);
-    log_mesa(m, "Tablero inicial", true);
-    mover(m, true, 0, 7);
-    mover(m, true, 0, 0);
-    mover(m, false, 8, 11);
+    log_mesa(m, "Comienza la partida", true);
+    for (int i = 0; i < 13; i++) {
+        m.fichas[i] = {&m, i == 0, i - 1, cfg.seed + m.id * 100 + i};
+        pthread_create(&m.hilos[i], nullptr, hilo_ficha, &m.fichas[i]);
+    }
+    if (!esperar(&m.fin)) {
+        pthread_mutex_lock(&m.mtx);
+        finalizar(m, "partida interrumpida por SIGINT");
+        pthread_mutex_unlock(&m.mtx);
+    }
+    for (int i = 0; i < 13; i++) pthread_join(m.hilos[i], nullptr);
+    log_mesa(m, "FIN: " + m.resultado, false);
     pthread_mutex_destroy(&m.mtx);
     sem_destroy(&m.fin);
+    sem_post(&sem_mesas);
+    return nullptr;
+}
+
+int g_n, g_m, g_creadas = 0;
+vector<Mesa> g_mesas;
+vector<pthread_t> g_hilos_mesa;
+pthread_mutex_t mm_mtx = PTHREAD_MUTEX_INITIALIZER;
+sem_t sem_puma, sem_perro;
+queue<int> cola_puma, cola_perro;
+
+void* cliente(void* arg) {
+    int id = *static_cast<int*>(arg);
+    unsigned seed = cfg.seed + id;
+    timespec ts{0, (rand_r(&seed) % 200) * 1000000L};
+    nanosleep(&ts, nullptr);
+    if (g_sigint) return nullptr;
+    bool puma = id % 2 == 0;
+    pthread_mutex_lock(&mm_mtx);
+    (puma ? cola_puma : cola_perro).push(id);
+    pthread_mutex_unlock(&mm_mtx);
+    log_texto("[Servidor] Llega el cliente " + to_string(id) + (puma ? " como PUMA\n" : " como PERROS\n"));
+    sem_post(puma ? &sem_puma : &sem_perro);
+    return nullptr;
+}
+
+void* matchmaker(void*) {
+    for (int i = 0; i < g_n / 2; i++) {
+        if (!esperar(&sem_puma) || !esperar(&sem_perro)) break;
+        pthread_mutex_lock(&mm_mtx);
+        int cp = cola_puma.front();
+        cola_puma.pop();
+        int cd = cola_perro.front();
+        cola_perro.pop();
+        pthread_mutex_unlock(&mm_mtx);
+        log_texto("[Servidor] Pareja " + to_string(i + 1) + ": cliente " + to_string(cp) + " (PUMA) vs cliente " +
+                  to_string(cd) + " (PERROS)\n");
+        if (!esperar(&sem_mesas)) break;
+        g_mesas[i].id = i + 1;
+        g_mesas[i].cli_puma = cp;
+        g_mesas[i].cli_perro = cd;
+        pthread_create(&g_hilos_mesa[i], nullptr, juez, &g_mesas[i]);
+        g_creadas++;
+    }
+    return nullptr;
+}
+
+void manejador(int) {
+    g_sigint = 1;
+}
+
+int main(int argc, char** argv) {
+    if (argc < 3 || argc > 4) {
+        printf("Uso: %s N M [config.txt]\n", argv[0]);
+        return 1;
+    }
+    g_n = atoi(argv[1]);
+    g_m = atoi(argv[2]);
+    if (g_n < 2 || g_m < 1) {
+        printf("N debe ser >= 2 y M >= 1\n");
+        return 1;
+    }
+    if (argc == 4 && !leer_config(argv[3])) return 1;
+
+    struct sigaction sa = {};
+    sa.sa_handler = manejador;
+    sigaction(SIGINT, &sa, nullptr);
+
+    sem_init(&sem_mesas, 0, g_m);
+    sem_init(&sem_puma, 0, 0);
+    sem_init(&sem_perro, 0, 0);
+    g_mesas.resize(g_n / 2);
+    g_hilos_mesa.resize(g_n / 2);
+    vector<pthread_t> hilos(g_n);
+    vector<int> ids(g_n);
+
+    pthread_t mm;
+    pthread_create(&mm, nullptr, matchmaker, nullptr);
+    for (int i = 0; i < g_n; i++) {
+        ids[i] = i;
+        pthread_create(&hilos[i], nullptr, cliente, &ids[i]);
+    }
+    for (int i = 0; i < g_n; i++) pthread_join(hilos[i], nullptr);
+    pthread_join(mm, nullptr);
+    for (int i = 0; i < g_creadas; i++) pthread_join(g_hilos_mesa[i], nullptr);
+
+    if (g_sigint) puts("Servidor interrumpido con SIGINT: recursos liberados.");
+    sem_destroy(&sem_mesas);
+    sem_destroy(&sem_puma);
+    sem_destroy(&sem_perro);
+    pthread_mutex_destroy(&mm_mtx);
+    pthread_mutex_destroy(&log_mtx);
     return 0;
 }
