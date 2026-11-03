@@ -6,17 +6,18 @@ Tarea 2 de Sistemas Operativos. Simulación de un torneo de Komikan en tiempo re
 
 ## Contenido del repositorio
 
-|  Archivo        |                                Descripción |
-|-----------------|----------------------------------------------------------------------------------|
-| `torneo.cpp`    |          Código fuente completo (C++17 con pthreads y semáforos POSIX)           |
-| `test_cases.txt`|     Casos de prueba entregados; el programa lee de aquí la primera línea `CONFIG`|
-| `README.md`     |             Este mismo archivo                                                   |
+| Archivo | Descripción |
+|---|---|
+| `torneo.cpp` | Código fuente completo (C++17 con pthreads y semáforos POSIX) |
+| `test_cases.txt` | Casos de prueba entregados; el programa lee de aquí la primera línea `CONFIG` |
+| `README.md` | Este mismo archivo |
+| `informe_tarea2.pdf` | Informe de diseño (máximo 2 páginas) |
 
 ## Cómo compilar
 
 Requiere Linux, macOS o WSL con `g++` instalado (en Ubuntu: `sudo apt install build-essential`).
 
-```bash (terminal)
+```bash
 g++ -Wall -Wextra -std=c++17 -pthread -o torneo torneo.cpp
 ```
 
@@ -30,9 +31,9 @@ La compilación no debe mostrar errores ni advertencias.
 
 - `N`: cantidad total de clientes (la mitad juega de Puma y la mitad de Perros; si N es impar, un cliente queda sin pareja).
 - `M`: máximo de mesas activas al mismo tiempo.
-- `config.txt`: archivo de configuración opcional.
+- `config.txt`: archivo de configuración opcional (los corchetes indican que es opcional, no se escriben). El repositorio incluye `test_cases.txt`, que también sirve como archivo de configuración.
 
-Ejemplos: (pruebas realizadas con exito)
+Ejemplos:
 
 ```bash
 ./torneo 6 2 test_cases.txt      # 6 clientes, 2 mesas
@@ -50,28 +51,39 @@ La salida es larga porque se imprime cada movimiento con el tablero. Para ver so
 
 Con una ejecución larga en curso (por ejemplo `./torneo 20 2 test_cases.txt`), presionar `Ctrl+C`. Cada mesa activa termina con `FIN: partida interrumpida por SIGINT` y el programa cierra con el mensaje `Servidor interrumpido con SIGINT: recursos liberados.`
 
+Para limitar la duración y cerrar de forma ordenada se puede usar `timeout` enviando SIGINT (equivale a presionar Ctrl+C):
+
+```bash
+timeout -s INT 60 ./torneo 20 2 test_cases.txt
+```
+
 ### Probar el abandono de un jugador
 
-Crear un `config.txt` con una línea como esta y ejecutar con el siguinete comando:
+Crear un archivo `config.txt` con esta línea:
 
 ```
 CONFIG SEED 42 DELAY_MIN 20 DELAY_MAX 60 PUMA_INIT 2 2 FALLA_PROB 10
 ```
 
-Algunas partidas terminarán con: --> `gana el PUMA por abandono del oponente` (o `gana los PERROS ...`).
-lo que variaria seria el nombre del ganador, netamente por como se desarolle el juego.
+Y ejecutar:
+
+```bash
+./torneo 6 2 config.txt
+```
+
+Algunas partidas terminarán con `gana el PUMA por abandono del oponente` (o `gana los PERROS ...`). Cuál de los dos gana depende de cómo se desarrolle cada partida.
 
 ## Archivo de configuración
 
 Palabras clave seguidas de su valor, en una o varias líneas. La lectura se detiene al llegar a la primera palabra `EVENT` (por eso también sirve `test_cases.txt`, del cual se usa solo la primera línea `CONFIG`).
 
-|     Clave       |                                  Significado                                                                | Valor por defecto |
-|-----------------|-------------------------------------------------------------------------------------------------------------|-------------------|
-| `SEED`          | Semilla aleatoria                                                                                           |        42         |
-| `DELAY_MIN`     | Retardo mínimo entre movimientos (ms)                                                                       |        50         |
-| `DELAY_MAX`     | Retardo máximo entre movimientos (ms)                                                                       |        300        |
-| `PUMA_INIT r c` | Casilla inicial del puma (fila y columna)                                                                   |         2 2       |
-| `FALLA_PROB`    | Probabilidad (por mil) de que un jugador falle en cada intento de movimiento; sirve para probar el abandono |          0        |
+| Clave | Significado | Valor por defecto |
+|---|---|---|
+| `SEED` | Semilla aleatoria | 42 |
+| `DELAY_MIN` | Retardo mínimo entre movimientos (ms) | 50 |
+| `DELAY_MAX` | Retardo máximo entre movimientos (ms) | 300 |
+| `PUMA_INIT r c` | Casilla inicial del puma (fila y columna) | 2 2 |
+| `FALLA_PROB` | Probabilidad (por mil) de que un jugador falle en cada intento de movimiento; sirve para probar el abandono | 0 |
 
 ## Reglas implementadas
 
@@ -84,22 +96,22 @@ Palabras clave seguidas de su valor, en una o varias líneas. La lectura se deti
 
 ## Funciones principales
 
-|        Función            |                              Qué hace                                              |
-|---------------------------|------------------------------------------------------------------------------------|
-| `leer_config`             | Lee semilla, retardos, posición del puma y probabilidad de falla                   |
-| `log_texto`, `log_mesa`   | Imprimen eventos y el tablero sin mezclar líneas entre mesas                       |
-| `dormir`                  | Retardo aleatorio entre `DELAY_MIN` y `DELAY_MAX`                                  |
-| `esperar`                 | Espera un semáforo cada 100 ms revisando si llegó Ctrl+C                           |
-| `vecinos`, `saltos`       | Calculan las casillas adyacentes y los saltos posibles desde una casilla           |
-| `iniciar`                 | Prepara una mesa: tablero, puma, 12 perros, mutex y semáforo                       |
-| `validar`, `mover`        | El juez valida un movimiento (adyacencia, casilla libre, captura) y lo aplica      |
-| `acorralado`, `finalizar` | Detectan la derrota del puma y cierran la partida                                  |
-| `turno`                   | Elige el movimiento de una ficha (el puma prefiere capturar)                       |
-| `hilo_ficha`              | Hilo de cada ficha: espera, bloquea la mesa y mueve                                |
-| `juez`                    | Hilo de cada mesa: crea las 13 fichas, espera el fin y libera la mesa              |
-| `cliente`                 | Hilo de cada jugador: llega en un momento aleatorio y se anota en su cola          |
-| `matchmaker`              | Empareja un puma con un perro y espera una mesa libre                              |
-| `manejador`               | Manejador de SIGINT: activa una bandera global                                     |
+| Función | Qué hace |
+|---|---|
+| `leer_config` | Lee semilla, retardos, posición del puma y probabilidad de falla |
+| `log_texto`, `log_mesa` | Imprimen eventos y el tablero sin mezclar líneas entre mesas |
+| `dormir` | Retardo aleatorio entre `DELAY_MIN` y `DELAY_MAX` |
+| `esperar` | Espera un semáforo cada 100 ms revisando si llegó Ctrl+C |
+| `vecinos`, `saltos` | Calculan las casillas adyacentes y los saltos posibles desde una casilla |
+| `iniciar` | Prepara una mesa: tablero, puma, 12 perros, mutex y semáforo |
+| `validar`, `mover` | El juez valida un movimiento (adyacencia, casilla libre, captura) y lo aplica |
+| `acorralado`, `finalizar` | Detectan la derrota del puma y cierran la partida |
+| `turno` | Elige el movimiento de una ficha (el puma prefiere capturar) |
+| `hilo_ficha` | Hilo de cada ficha: espera, bloquea la mesa y mueve |
+| `juez` | Hilo de cada mesa: crea las 13 fichas, espera el fin y libera la mesa |
+| `cliente` | Hilo de cada jugador: llega en un momento aleatorio y se anota en su cola |
+| `matchmaker` | Empareja un puma con un perro y espera una mesa libre |
+| `manejador` | Manejador de SIGINT: activa una bandera global |
 
 ## Diseño y justificación
 
@@ -112,6 +124,7 @@ Palabras clave seguidas de su valor, en una o varias líneas. La lectura se deti
 **Otras primitivas.** Los semáforos `sem_puma` y `sem_perro` cuentan los clientes en cola; un mutex protege las colas; un semáforo por mesa (`fin`) avisa al juez que la partida terminó; un mutex serializa la impresión.
 
 **Riesgos de concurrencia.**
+
 - *Deadlock:* no hay espera circular porque cada mesa usa un solo mutex, y el único anidamiento es mutex de mesa seguido del mutex de impresión, siempre en ese orden.
 - *Starvation:* las colas son FIFO, así que ningún cliente espera indefinidamente. Entre las fichas, los retardos aleatorios hacen muy improbable que una acapare el lock.
 - *Livelock:* las fichas no reintentan en un ciclo apretado; siempre duermen un retardo aleatorio entre intentos.
@@ -124,5 +137,6 @@ Palabras clave seguidas de su valor, en una o varias líneas. La lectura se deti
 
 - El enunciado incluye el dibujo del tablero. Se asumió un trono de 3 casillas conectado a la fila superior, con movimientos ortogonales; los saltos del puma se hacen solo en línea recta entre casillas de la cuadrícula.
 - Los perros y el puma eligen sus movimientos al azar (el puma prefiere capturar si puede). No hay límite de jugadas, por lo que una partida podría alargarse.
+- La posición inicial de los perros es fija y no se configura; solo se puede cambiar la del puma con `PUMA_INIT`.
+- El abandono de un jugador se simula con `FALLA_PROB`; no se detecta una desconexión real.
 - Del archivo `test_cases.txt` solo se lee la configuración inicial; los eventos (`EVENT ...`) no se ejecutan.
-
